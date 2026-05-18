@@ -1250,12 +1250,21 @@ const loadInitial = () => {
   if (!saved) return DEFAULT_STATE;
   if (Array.isArray(saved.covers) && saved.covers.length > 0) {
     // Already in the new shape — backfill any missing cover fields with defaults
+    // Also migrate the OLD default filename ("今日吃瓜 · 周三头条") → 封面N
+    const OLD_DEFAULT_FILENAME = '今日吃瓜 · 周三头条';
+    const migratedCovers = saved.covers.map((c, i) => {
+      const next = mkCover({ ...c });
+      if (next.filename === OLD_DEFAULT_FILENAME) {
+        next.filename = `封面${i + 1}`;
+      }
+      return next;
+    });
     return {
       library: saved.library || [],
       titlePresets: saved.titlePresets || DEFAULT_TITLE_PRESETS.map(p => ({ ...p })),
       templates: saved.templates || DEFAULT_TEMPLATES.map(t => ({ ...t })),
-      activeCoverIdx: Math.min(saved.activeCoverIdx || 0, saved.covers.length - 1),
-      covers: saved.covers.map(c => mkCover({ ...c })),
+      activeCoverIdx: Math.min(saved.activeCoverIdx || 0, migratedCovers.length - 1),
+      covers: migratedCovers,
     };
   }
   // Old flat shape — wrap into covers[0]
@@ -1263,6 +1272,7 @@ const loadInitial = () => {
   for (const k of COVER_FIELDS) {
     if (saved[k] !== undefined) cover[k] = saved[k];
   }
+  if (cover.filename === '今日吃瓜 · 周三头条') cover.filename = '封面1';
   return {
     covers: [cover],
     activeCoverIdx: 0,
