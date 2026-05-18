@@ -1202,7 +1202,7 @@ const clampTitle = (v) => {
 // Per-cover fields — everything that makes a single banner unique.
 // (Library + titlePresets are SHARED across all covers.)
 const DEFAULT_COVER = {
-  filename: '今日吃瓜 · 周三头条',
+  filename: '封面1',
   title: '这里是标题',
   subtitle: '作者名 · 2026 年 05 月 18 日 · 今日吃瓜，明星爆料',
   titleFont: 'ui',
@@ -1705,12 +1705,20 @@ function App() {
   // ───── canvas (multi-cover) management ─────
   const addCanvas = useCallback(() => {
     setRawState(prev => {
-      const idx = prev.covers.length + 1;
-      const newCover = mkCover({ filename: `未命名封面 ${idx}` });
+      // pick the smallest unused "封面N" number so deletions free up slots
+      const used = new Set(
+        prev.covers
+          .map(c => /^封面(\d+)$/.exec((c.filename || '').trim()))
+          .filter(Boolean)
+          .map(m => +m[1])
+      );
+      let n = 1;
+      while (used.has(n)) n++;
+      const newCover = mkCover({ filename: `封面${n}` });
       return {
         ...prev,
         covers: [...prev.covers, newCover],
-        activeCoverIdx: prev.covers.length, // jump to the new one
+        activeCoverIdx: prev.covers.length,
       };
     });
     flash('已新增画布');
