@@ -4,7 +4,7 @@
 
 ## 在线使用
 
-[点这里打开](https://shirleyxiaolulu.github.io/cover-studio/)https://shirleyxiaolulu.github.io/cover-studio/
+[点这里打开](https://shirleyxiaolulu.github.io/cover-studio/)  https://shirleyxiaolulu.github.io/cover-studio/
 
 ## 功能
 
