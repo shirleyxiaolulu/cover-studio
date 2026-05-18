@@ -4,7 +4,7 @@
 
 ## 在线使用
 
-[点这里打开](https://你的用户名.github.io/仓库名/) ← 部署 GitHub Pages 后把这里替换成你的链接
+[点这里打开](https://shirleyxiaolulu.github.io/cover-studio/)
 
 ## 功能
 
