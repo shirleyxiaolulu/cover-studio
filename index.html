@@ -774,9 +774,13 @@ button { font-family: inherit; cursor: pointer; }
   color: var(--ink-3);
   font-weight: 500;
 }
-.canvas-tab.add:hover {
+.canvas-tab.add:hover:not(:disabled) {
   border-color: var(--primary);
   color: var(--primary);
+}
+.canvas-tab.add:disabled {
+  opacity: .4;
+  cursor: not-allowed;
 }
 
 /* iOS-style toggle switch — used to show/hide title */
@@ -1215,6 +1219,10 @@ const saveState = (s) => {
 // ───── constants ─────
 const PRIMARY = '#ff5436';
 const TITLE_MAX = 80; // ~34 chars/row × 2 rows + buffer
+const LIBRARY_MAX = 20;   // max images in the shared library
+const CANVAS_MAX = 10;    // max covers in this session
+const IMG_MAX_DIM = 1500; // longer-edge cap for auto-resize on upload
+const IMG_QUALITY = 0.85; // JPEG encoder quality
 
 // slot position values are now in the range [-50, +50] (delta from object-position center 50%)
 const clampPos = (v) => Math.max(-50, Math.min(50, +v || 0));
@@ -1363,6 +1371,41 @@ const fileToDataURL = (file) => new Promise((res, rej) => {
   r.readAsDataURL(file);
 });
 
+// Compress an uploaded image: resize long edge to IMG_MAX_DIM if larger,
+// re-encode at IMG_QUALITY. Saves a LOT of localStorage space without affecting
+// banner export quality (banner max width is 1200, so 1500 is plenty of headroom).
+const compressImage = (file) => new Promise(async (resolve, reject) => {
+  try {
+    const dataUrl = await fileToDataURL(file);
+    const img = new Image();
+    img.onerror = reject;
+    img.onload = () => {
+      const { width: w, height: h } = img;
+      const maxEdge = Math.max(w, h);
+      // skip re-encode if already small in both dims AND original file is reasonably small
+      if (maxEdge <= IMG_MAX_DIM && file.size <= 500_000) {
+        resolve({ src: dataUrl, name: file.name });
+        return;
+      }
+      const ratio = maxEdge > IMG_MAX_DIM ? IMG_MAX_DIM / maxEdge : 1;
+      const newW = Math.round(w * ratio);
+      const newH = Math.round(h * ratio);
+      const canvas = document.createElement('canvas');
+      canvas.width = newW;
+      canvas.height = newH;
+      const ctx = canvas.getContext('2d');
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(img, 0, 0, newW, newH);
+      // PNG preserves transparency; everything else gets JPEG for smaller payload
+      const mime = file.type === 'image/png' ? 'image/png' : 'image/jpeg';
+      const out = canvas.toDataURL(mime, IMG_QUALITY);
+      resolve({ src: out, name: file.name });
+    };
+    img.src = dataUrl;
+  } catch (e) { reject(e); }
+});
+
 const acceptImage = (f) => f && /^image\//.test(f.type);
 
 // ───── main App ─────
@@ -1474,11 +1517,25 @@ function App() {
   const addToLibraryAndSlot = async (files, targetSlot = null) => {
     const list = Array.from(files).filter(acceptImage);
     if (list.length === 0) return;
-    const items = [];
-    for (const f of list) {
-      const src = await fileToDataURL(f);
-      items.push({ src, name: f.name });
+    // ── enforce library cap (20) ──
+    const space = LIBRARY_MAX - (rawState.library?.length || 0);
+    if (space <= 0) {
+      alert(`素材池已满（上限 ${LIBRARY_MAX} 张）。\n请先在下方图库里删除一些旧图，再上传新的。`);
+      return;
     }
+    const accepted = list.slice(0, space);
+    const dropped = list.length - accepted.length;
+    // ── compress each image (resize to ${IMG_MAX_DIM}px + re-encode JPEG ${IMG_QUALITY * 100}%) ──
+    const items = [];
+    for (const f of accepted) {
+      try {
+        const item = await compressImage(f);
+        items.push(item);
+      } catch (e) {
+        console.warn('compressImage failed for', f.name, e);
+      }
+    }
+    if (items.length === 0) return;
     setState(prev => {
       const newLib = [...prev.library, ...items];
       const newSlots = [...prev.slotImgs];
@@ -1497,7 +1554,11 @@ function App() {
       }
       return { ...prev, library: newLib, slotImgs: newSlots };
     });
-    flash(`已上传 ${items.length} 张图`);
+    if (dropped > 0) {
+      flash(`已上传 ${items.length} 张，${dropped} 张超过上限未添加`);
+    } else {
+      flash(`已上传 ${items.length} 张图`);
+    }
   };
 
   const setSlotFromLibrary = (idx, libItem) => {
@@ -1513,6 +1574,14 @@ function App() {
     const libItem = state.library.find(u => u.src === src);
     if (libItem) setSlotFromLibrary(idx, libItem);
   };
+
+  const clearLibrary = useCallback(() => {
+    const count = rawState.library?.length || 0;
+    if (count === 0) return;
+    if (!confirm(`清空素材池里全部 ${count} 张图？\n\n（已经填到画布 slot 里的图不受影响，画布上的图是独立副本。）`)) return;
+    setRawState(prev => ({ ...prev, library: [] }));
+    flash(`已清空 ${count} 张素材`);
+  }, [rawState.library, setRawState]);
 
   // Remove a library image. If it's used by any slot, clear those slots too.
   const deleteLibraryItem = (libIdx) => {
@@ -1678,6 +1747,10 @@ function App() {
 
   // Create a new canvas based on the template (with placeholder text)
   const applyTemplateAsNewCanvas = useCallback((tpl) => {
+    if ((rawState.covers?.length || 0) >= CANVAS_MAX) {
+      alert(`画布数量已达上限（${CANVAS_MAX} 张）。\n请先删除一些不再需要的画布。`);
+      return;
+    }
     setRawState(prev => {
       const newCover = mkCover({
         ...extractTemplateFields(tpl),
@@ -1742,6 +1815,10 @@ function App() {
 
   // ───── canvas (multi-cover) management ─────
   const addCanvas = useCallback(() => {
+    if ((rawState.covers?.length || 0) >= CANVAS_MAX) {
+      alert(`画布数量已达上限（${CANVAS_MAX} 张）。\n请先删除一些不再需要的画布。`);
+      return;
+    }
     setRawState(prev => {
       // pick the smallest unused "封面N" number so deletions free up slots
       const used = new Set(
@@ -1760,7 +1837,7 @@ function App() {
       };
     });
     flash('已新增画布');
-  }, [setRawState]);
+  }, [rawState.covers, setRawState]);
   const switchCanvas = useCallback((idx) => {
     setRawState(prev => {
       if (idx < 0 || idx >= prev.covers.length || idx === prev.activeCoverIdx) return prev;
@@ -1782,6 +1859,10 @@ function App() {
     flash('已删除画布');
   }, [setRawState]);
   const duplicateCanvas = useCallback((idx) => {
+    if ((rawState.covers?.length || 0) >= CANVAS_MAX) {
+      alert(`画布数量已达上限（${CANVAS_MAX} 张）。\n请先删除一些不再需要的画布。`);
+      return;
+    }
     setRawState(prev => {
       const src = prev.covers[idx];
       if (!src) return prev;
@@ -1791,7 +1872,7 @@ function App() {
       return { ...prev, covers: newCovers, activeCoverIdx: idx + 1 };
     });
     flash('已复制画布');
-  }, [setRawState]);
+  }, [rawState.covers, setRawState]);
 
   // ───── export ─────
   // Render a cover object to a PNG Blob (2× SSAA → downscale).
@@ -2197,6 +2278,7 @@ function App() {
               onUpload={addToLibraryAndSlot}
               onPickLibrary={setSlotFromLibrary}
               onDeleteLibrary={deleteLibraryItem}
+              onClearLibrary={clearLibrary}
               onChangeCollage={changeCollage}
               activeSlot={activeSlot}
               setActiveSlot={setActiveSlot}
@@ -2277,7 +2359,7 @@ function App() {
 }
 
 // ───── ImagesPanel ─────
-function ImagesPanel({ state, onUpload, onPickLibrary, onDeleteLibrary, onChangeCollage, activeSlot, setActiveSlot, onClearSlot, flash }) {
+function ImagesPanel({ state, onUpload, onPickLibrary, onDeleteLibrary, onClearLibrary, onChangeCollage, activeSlot, setActiveSlot, onClearSlot, flash }) {
   const [drag, setDrag] = useState(false);
   const inputRef = useRef(null);
 
@@ -2395,11 +2477,40 @@ function ImagesPanel({ state, onUpload, onPickLibrary, onDeleteLibrary, onChange
         {/* library —素材池 */}
         <div>
           <div className="row" style={{ justifyContent: 'space-between', marginBottom: 4 }}>
-            <span style={{ fontSize: 10.5, textTransform: 'uppercase', letterSpacing: '.08em', color: 'var(--ink-3)', fontWeight: 600 }}>
-              素材池 · {state.library.length}
+            <span style={{
+              fontSize: 10.5, textTransform: 'uppercase', letterSpacing: '.08em',
+              color: state.library.length >= LIBRARY_MAX ? PRIMARY : 'var(--ink-3)',
+              fontWeight: 600,
+            }}>
+              素材池 · {state.library.length}/{LIBRARY_MAX}
             </span>
+            {state.library.length > 0 && onClearLibrary && (
+              <button
+                onClick={onClearLibrary}
+                title="清空素材池里所有图"
+                style={{
+                  background: 'transparent', border: 0, padding: 0,
+                  cursor: 'pointer', color: 'var(--ink-3)',
+                  fontSize: 10.5, fontWeight: 500,
+                  display: 'inline-flex', alignItems: 'center', gap: 3,
+                  fontFamily: 'inherit',
+                }}
+              >
+                <Icon name="trash" size={10}/> 清空
+              </button>
+            )}
           </div>
-          {state.library.length > 0 && (
+          {state.library.length >= LIBRARY_MAX - 2 && state.library.length < LIBRARY_MAX && (
+            <div style={{ fontSize: 10.5, color: PRIMARY, marginBottom: 6, lineHeight: 1.5 }}>
+              快到上限了，删一些旧的再传新的
+            </div>
+          )}
+          {state.library.length >= LIBRARY_MAX && (
+            <div style={{ fontSize: 10.5, color: PRIMARY, marginBottom: 6, lineHeight: 1.5 }}>
+              已达 {LIBRARY_MAX} 张上限，请先删除一些再上传
+            </div>
+          )}
+          {state.library.length > 0 && state.library.length < LIBRARY_MAX - 2 && (
             <div style={{ fontSize: 10.5, color: 'var(--ink-3)', marginBottom: 8, lineHeight: 1.5 }}>
               拖到画布 slot 直接使用 · 或选中一个 slot 后点击
             </div>
@@ -3341,9 +3452,10 @@ function Banner({ state, activeSlot, setActiveSlot, updateSlot, setTitle, setSub
           <button
             className="canvas-tab add"
             onClick={canvasActions.addCanvas}
-            title="新增一张空白画布"
+            disabled={covers.length >= CANVAS_MAX}
+            title={covers.length >= CANVAS_MAX ? `已达 ${CANVAS_MAX} 张上限` : '新增一张空白画布'}
           >
-            <Icon name="plus" size={12} stroke={2}/> 添加画布
+            <Icon name="plus" size={12} stroke={2}/> 添加画布 · {covers.length}/{CANVAS_MAX}
           </button>
         </div>
       )}
