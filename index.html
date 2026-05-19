@@ -779,6 +779,32 @@ button { font-family: inherit; cursor: pointer; }
   color: var(--primary);
 }
 
+/* iOS-style toggle switch — used to show/hide title */
+.cs-switch {
+  width: 30px; height: 18px;
+  background: rgba(0,0,0,.18);
+  border-radius: 999px;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  position: relative;
+  transition: background .15s;
+  flex-shrink: 0;
+}
+.cs-switch::after {
+  content: '';
+  position: absolute;
+  top: 2px; left: 2px;
+  width: 14px; height: 14px;
+  background: #fff;
+  border-radius: 50%;
+  box-shadow: 0 1px 2px rgba(0,0,0,.25);
+  transition: left .15s;
+}
+.cs-switch.on { background: var(--primary); }
+.cs-switch.on::after { left: 14px; }
+.cs-switch:hover { filter: brightness(1.05); }
+
 /* slider reset button */
 .reset-btn {
   width: 18px; height: 18px;
@@ -1212,11 +1238,13 @@ const DEFAULT_COVER = {
   titleAlign: 'center',
   titleWeight: 600,
   titleLayout: 'center',
+  titleVisible: true,
   textGap: 18,
   textPadX: 55,
   textPadBottom: 30,
   subtitleColor: '#ffffff',
   subtitleOpacity: 85,
+  subtitleVisible: true,
   activePresetId: 'center-regular',
   radius: 0,
   collageCount: 2,
@@ -1855,66 +1883,101 @@ function App() {
     const titleAlpha = (cover.titleOpacity ?? 100) / 100;
     const subtitleColor = cover.subtitleColor || '#ffffff';
     const subtitleAlpha = (cover.subtitleOpacity ?? 85) / 100;
+    const showTitle = cover.titleVisible !== false;
+    const showSubtitle = cover.subtitleVisible !== false;
 
-    ctx.shadowColor = 'rgba(0,0,0,0.35)';
-    ctx.shadowBlur = 20;
-    ctx.shadowOffsetY = 2;
-    ctx.fillStyle = hexToRgba(cover.titleColor || '#ffffff', titleAlpha);
-    ctx.font = `${tWeight} ${tSize}px ${titleFontFamily}`;
-    ctx.textBaseline = 'middle';
+    if (showTitle || showSubtitle) {
+      ctx.shadowColor = 'rgba(0,0,0,0.35)';
+      ctx.shadowBlur = 20;
+      ctx.shadowOffsetY = 2;
+      ctx.fillStyle = hexToRgba(cover.titleColor || '#ffffff', titleAlpha);
+      ctx.font = `${tWeight} ${tSize}px ${titleFontFamily}`;
+      ctx.textBaseline = 'middle';
 
-    if (layout === 'bottom-left') {
-      const padX = cover.textPadX ?? 30;
-      const padBottom = cover.textPadBottom ?? 30;
-      const gap = cover.textGap ?? 7;
-      ctx.textAlign = 'left';
-      const maxTitleWidth = w - padX * 2;
-      let titleLine = cover.title || '';
-      if (ctx.measureText(titleLine).width > maxTitleWidth) {
-        while (titleLine.length > 0 && ctx.measureText(titleLine + '…').width > maxTitleWidth) {
-          titleLine = Array.from(titleLine).slice(0, -1).join('');
+      if (layout === 'bottom-left') {
+        const padX = cover.textPadX ?? 30;
+        const padBottom = cover.textPadBottom ?? 30;
+        const gap = cover.textGap ?? 7;
+        ctx.textAlign = 'left';
+        const maxTitleWidth = w - padX * 2;
+        const lineHeight = tSize * 1.25;
+        const subSize = 20;
+        const titleY = h - padBottom - lineHeight / 2;
+        // when title is hidden, subtitle takes the title's bottom position
+        const subY = showTitle ? (titleY - lineHeight / 2 - gap - subSize / 2) : titleY;
+        if (showTitle) {
+          let titleLine = cover.title || '';
+          if (ctx.measureText(titleLine).width > maxTitleWidth) {
+            while (titleLine.length > 0 && ctx.measureText(titleLine + '…').width > maxTitleWidth) {
+              titleLine = Array.from(titleLine).slice(0, -1).join('');
+            }
+            titleLine = titleLine + '…';
+          }
+          ctx.fillText(titleLine, padX, titleY);
         }
-        titleLine = titleLine + '…';
-      }
-      const lineHeight = tSize * 1.25;
-      const subSize = 20;
-      const titleY = h - padBottom - lineHeight / 2;
-      const subY = titleY - lineHeight / 2 - gap - subSize / 2;
-      ctx.fillText(titleLine, padX, titleY);
-      ctx.shadowBlur = 10;
-      ctx.fillStyle = hexToRgba(subtitleColor, subtitleAlpha);
-      ctx.font = `400 ${subSize}px ${titleFontFamily}`;
-      ctx.fillText(cover.subtitle || '', padX, subY);
-    } else {
-      ctx.textAlign = cover.titleAlign || 'center';
-      const padX = cover.textPadX ?? 55;
-      const gap = cover.textGap ?? 18;
-      const maxTitleWidth = w - padX * 2;
-      const MAX_TITLE_LINES = 2;
-      let titleLines = wrapText(ctx, cover.title, maxTitleWidth);
-      if (titleLines.length > MAX_TITLE_LINES) {
-        const kept = titleLines.slice(0, MAX_TITLE_LINES);
-        let last = kept[MAX_TITLE_LINES - 1];
-        while (ctx.measureText(last + '…').width > maxTitleWidth && last.length > 0) {
-          last = Array.from(last).slice(0, -1).join('');
+        if (showSubtitle) {
+          ctx.shadowBlur = 10;
+          ctx.fillStyle = hexToRgba(subtitleColor, subtitleAlpha);
+          ctx.font = `400 ${subSize}px ${titleFontFamily}`;
+          ctx.fillText(cover.subtitle || '', padX, subY);
         }
-        kept[MAX_TITLE_LINES - 1] = last + '…';
-        titleLines = kept;
+      } else {
+        ctx.textAlign = cover.titleAlign || 'center';
+        const padX = cover.textPadX ?? 55;
+        const gap = cover.textGap ?? 18;
+        const maxTitleWidth = w - padX * 2;
+        const lineHeight = tSize * 1.25;
+        const subSize = 22;
+        const xPos = cover.titleAlign === 'left' ? padX
+          : cover.titleAlign === 'right' ? w - padX
+          : w / 2;
+        if (showTitle && showSubtitle) {
+          const MAX_TITLE_LINES = 2;
+          let titleLines = wrapText(ctx, cover.title, maxTitleWidth);
+          if (titleLines.length > MAX_TITLE_LINES) {
+            const kept = titleLines.slice(0, MAX_TITLE_LINES);
+            let last = kept[MAX_TITLE_LINES - 1];
+            while (ctx.measureText(last + '…').width > maxTitleWidth && last.length > 0) {
+              last = Array.from(last).slice(0, -1).join('');
+            }
+            kept[MAX_TITLE_LINES - 1] = last + '…';
+            titleLines = kept;
+          }
+          const totalH = titleLines.length * lineHeight + gap + subSize;
+          const yStart = (h - totalH) / 2 + lineHeight / 2;
+          titleLines.forEach((line, i) => {
+            ctx.fillText(line, xPos, yStart + i * lineHeight);
+          });
+          ctx.shadowBlur = 10;
+          ctx.fillStyle = hexToRgba(subtitleColor, subtitleAlpha);
+          ctx.font = `400 ${subSize}px ${titleFontFamily}`;
+          ctx.fillText(cover.subtitle || '', xPos, yStart + titleLines.length * lineHeight + gap);
+        } else if (showTitle) {
+          // subtitle hidden — center the title alone
+          const MAX_TITLE_LINES = 2;
+          let titleLines = wrapText(ctx, cover.title, maxTitleWidth);
+          if (titleLines.length > MAX_TITLE_LINES) {
+            const kept = titleLines.slice(0, MAX_TITLE_LINES);
+            let last = kept[MAX_TITLE_LINES - 1];
+            while (ctx.measureText(last + '…').width > maxTitleWidth && last.length > 0) {
+              last = Array.from(last).slice(0, -1).join('');
+            }
+            kept[MAX_TITLE_LINES - 1] = last + '…';
+            titleLines = kept;
+          }
+          const totalH = titleLines.length * lineHeight;
+          const yStart = (h - totalH) / 2 + lineHeight / 2;
+          titleLines.forEach((line, i) => {
+            ctx.fillText(line, xPos, yStart + i * lineHeight);
+          });
+        } else if (showSubtitle) {
+          // title hidden — center subtitle alone
+          ctx.shadowBlur = 10;
+          ctx.fillStyle = hexToRgba(subtitleColor, subtitleAlpha);
+          ctx.font = `400 ${subSize}px ${titleFontFamily}`;
+          ctx.fillText(cover.subtitle || '', xPos, h / 2);
+        }
       }
-      const lineHeight = tSize * 1.25;
-      const subSize = 22;
-      const totalH = titleLines.length * lineHeight + gap + subSize;
-      const yStart = (h - totalH) / 2 + lineHeight / 2;
-      const xPos = cover.titleAlign === 'left' ? padX
-        : cover.titleAlign === 'right' ? w - padX
-        : w / 2;
-      titleLines.forEach((line, i) => {
-        ctx.fillText(line, xPos, yStart + i * lineHeight);
-      });
-      ctx.shadowBlur = 10;
-      ctx.fillStyle = hexToRgba(subtitleColor, subtitleAlpha);
-      ctx.font = `400 ${subSize}px ${titleFontFamily}`;
-      ctx.fillText(cover.subtitle || '', xPos, yStart + titleLines.length * lineHeight + gap);
     }
 
     ctx.shadowColor = 'transparent';
@@ -2621,10 +2684,27 @@ function TitleSection({ state, setState, selected, presetActions }) {
   const isModified = activePreset ? !presetMatches(state, activePreset) : false;
   const noActive = !activePreset; // current style isn't tied to any preset
   const [dragOverId, setDragOverId] = React.useState(null);
+  const titleVisible = state.titleVisible !== false; // default true
   return (
     <PropSection id="title" title="标题" selected={selected}
-      badge={<span style={{ fontFamily: 'var(--f-mono)', fontSize: 10, color: counterColor }}>{count}/{TITLE_MAX}</span>}
+      badge={
+        <div className="row" style={{ gap: 10 }}>
+          <span style={{ fontFamily: 'var(--f-mono)', fontSize: 10, color: counterColor }}>{count}/{TITLE_MAX}</span>
+          <button
+            className={'cs-switch' + (titleVisible ? ' on' : '')}
+            onClick={(e) => { e.stopPropagation(); setState(prev => ({ ...prev, titleVisible: !titleVisible })); }}
+            title={titleVisible ? '关闭标题（不在画布上显示）' : '打开标题'}
+            aria-label="显示标题"
+          />
+        </div>
+      }
     >
+      <div style={{
+        display: 'flex', flexDirection: 'column', gap: 8,
+        opacity: titleVisible ? 1 : 0.45,
+        pointerEvents: titleVisible ? 'auto' : 'none',
+        transition: 'opacity .15s',
+      }}>
       <textarea
         className="textarea"
         value={value}
@@ -2838,14 +2918,31 @@ function TitleSection({ state, setState, selected, presetActions }) {
       </div>
       <SliderRow label="透明度" value={state.titleOpacity ?? 100} min={0} max={100} unit="%" defaultValue={100}
         onChange={(v) => setState(prev => ({ ...prev, titleOpacity: v }), { skipHistory: true })}/>
+      </div>{/* /title-body wrapper */}
     </PropSection>
   );
 }
 
 // ───── Subtitle section ─────
 function SubtitleSection({ state, setState, selected }) {
+  const subtitleVisible = state.subtitleVisible !== false;
   return (
-    <PropSection id="subtitle" title="副标题" selected={selected}>
+    <PropSection id="subtitle" title="副标题" selected={selected}
+      badge={
+        <button
+          className={'cs-switch' + (subtitleVisible ? ' on' : '')}
+          onClick={(e) => { e.stopPropagation(); setState(prev => ({ ...prev, subtitleVisible: !subtitleVisible })); }}
+          title={subtitleVisible ? '关闭副标题（不在画布上显示）' : '打开副标题'}
+          aria-label="显示副标题"
+        />
+      }
+    >
+      <div style={{
+        display: 'flex', flexDirection: 'column', gap: 8,
+        opacity: subtitleVisible ? 1 : 0.45,
+        pointerEvents: subtitleVisible ? 'auto' : 'none',
+        transition: 'opacity .15s',
+      }}>
       <textarea
         className="textarea"
         value={state.subtitle}
@@ -2871,6 +2968,7 @@ function SubtitleSection({ state, setState, selected }) {
       </div>
       <SliderRow label="透明度" value={state.subtitleOpacity ?? 85} min={0} max={100} unit="%" defaultValue={85}
         onChange={(v) => setState(prev => ({ ...prev, subtitleOpacity: v }), { skipHistory: true })}/>
+      </div>{/* /subtitle-body wrapper */}
     </PropSection>
   );
 }
@@ -3055,12 +3153,12 @@ function Banner({ state, activeSlot, setActiveSlot, updateSlot, setTitle, setSub
   // initialize editable text
   useEffect(() => {
     if (titleRef.current && titleRef.current.textContent !== state.title) {
-      titleRef.current.textContent = state.title;
+      titleRef.current.textContent = state.title || '';
     }
   }, [state.title]);
   useEffect(() => {
     if (subtitleRef.current && subtitleRef.current.textContent !== state.subtitle) {
-      subtitleRef.current.textContent = state.subtitle;
+      subtitleRef.current.textContent = state.subtitle || '';
     }
   }, [state.subtitle]);
 
@@ -3156,9 +3254,10 @@ function Banner({ state, activeSlot, setActiveSlot, updateSlot, setTitle, setSub
             gap: `${gap}px`,
             ...(layout === 'bottom-left' ? { bottom: `${padBottom}px` } : {}),
           };
+          const showTitle = state.titleVisible !== false;
           return (
             <div className={'text-block ' + layout} style={blockStyle}>
-              <div
+              {showTitle && <div
                 ref={titleRef}
                 className="title-edit"
                 contentEditable
@@ -3188,8 +3287,8 @@ function Banner({ state, activeSlot, setActiveSlot, updateSlot, setTitle, setSub
                   opacity: (state.titleOpacity ?? 100) / 100,
                   ...textAlignStyle,
                 }}
-              />
-              <div
+              />}
+              {state.subtitleVisible !== false && <div
                 ref={subtitleRef}
                 className="subtitle-edit"
                 contentEditable
@@ -3204,7 +3303,7 @@ function Banner({ state, activeSlot, setActiveSlot, updateSlot, setTitle, setSub
                   opacity: (state.subtitleOpacity ?? 85) / 100,
                   ...textAlignStyle,
                 }}
-              />
+              />}
             </div>
           );
         })()}
