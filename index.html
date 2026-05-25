@@ -1294,6 +1294,7 @@ const DEFAULT_STATE = {
   titlePresets: DEFAULT_TITLE_PRESETS.map(p => ({ ...p })),
   templates: DEFAULT_TEMPLATES.map(t => ({ ...t })),
   sizePresets: [],
+  hiddenBuiltinSizes: [],
   defaultSizeId: 'bi-banner',
 };
 
@@ -1317,6 +1318,7 @@ const loadInitial = () => {
       titlePresets: saved.titlePresets || DEFAULT_TITLE_PRESETS.map(p => ({ ...p })),
       templates: saved.templates || DEFAULT_TEMPLATES.map(t => ({ ...t })),
       sizePresets: saved.sizePresets || [],
+      hiddenBuiltinSizes: saved.hiddenBuiltinSizes || [],
       defaultSizeId: saved.defaultSizeId || 'bi-banner',
       activeCoverIdx: Math.min(saved.activeCoverIdx || 0, migratedCovers.length - 1),
       covers: migratedCovers,
@@ -1335,6 +1337,7 @@ const loadInitial = () => {
     titlePresets: saved.titlePresets || DEFAULT_TITLE_PRESETS.map(p => ({ ...p })),
     templates: DEFAULT_TEMPLATES.map(t => ({ ...t })),
     sizePresets: saved.sizePresets || [],
+    hiddenBuiltinSizes: saved.hiddenBuiltinSizes || [],
     defaultSizeId: saved.defaultSizeId || 'bi-banner',
   };
 };
@@ -1838,11 +1841,30 @@ function App() {
   };
   const deleteSizePreset = (id) => {
     if (!confirm('删除这个尺寸预设？')) return;
-    setRawState(prev => ({
-      ...prev,
-      sizePresets: (prev.sizePresets || []).filter(p => p.id !== id),
-      defaultSizeId: prev.defaultSizeId === id ? 'bi-banner' : prev.defaultSizeId,
-    }));
+    setRawState(prev => {
+      const isBuiltin = id.startsWith('bi-');
+      const sizePresets = isBuiltin
+        ? (prev.sizePresets || [])
+        : (prev.sizePresets || []).filter(p => p.id !== id);
+      const hiddenBuiltinSizes = isBuiltin
+        ? [...(prev.hiddenBuiltinSizes || []), id]
+        : (prev.hiddenBuiltinSizes || []);
+      // recompute remaining visible sizes so the default can fall back sanely
+      const hiddenSet = new Set(hiddenBuiltinSizes);
+      const remaining = [
+        ...BUILTIN_SIZES.filter(s => !hiddenSet.has(s.id)),
+        ...sizePresets,
+      ];
+      let defaultSizeId = prev.defaultSizeId;
+      if (defaultSizeId === id) {
+        defaultSizeId = remaining.length ? remaining[0].id : null;
+      }
+      return { ...prev, sizePresets, hiddenBuiltinSizes, defaultSizeId };
+    });
+  };
+  const restoreBuiltinSizes = () => {
+    setRawState(prev => ({ ...prev, hiddenBuiltinSizes: [] }));
+    flash('已恢复内置尺寸');
   };
   const setDefaultSize = (id) => {
     setRawState(prev => ({ ...prev, defaultSizeId: id }));
@@ -1859,6 +1881,7 @@ function App() {
       titlePresets: DEFAULT_TITLE_PRESETS.map(p => ({ ...p })),
       templates: DEFAULT_TEMPLATES.map(t => ({ ...t })),
       sizePresets: [],
+      hiddenBuiltinSizes: [],
       defaultSizeId: 'bi-banner',
     }));
     localStorage.removeItem(STORAGE_KEY);
@@ -2406,10 +2429,12 @@ function App() {
               state={state}
               setTweak={setTweak}
               sizePresets={rawState.sizePresets || []}
+              hiddenBuiltinSizes={rawState.hiddenBuiltinSizes || []}
               defaultSizeId={rawState.defaultSizeId}
               onAddSizePreset={addSizePreset}
               onDeleteSizePreset={deleteSizePreset}
               onSetDefaultSize={setDefaultSize}
+              onRestoreBuiltins={restoreBuiltinSizes}
             />
           )}
         </aside>
@@ -2770,10 +2795,11 @@ function NumberField({ value, onChange, min, max, fallback, ...rest }) {
 }
 
 // ───── DesignProps (right rail · design tab) ─────
-function DesignProps({ state, setTweak, sizePresets = [], defaultSizeId, onAddSizePreset, onDeleteSizePreset, onSetDefaultSize }) {
+function DesignProps({ state, setTweak, sizePresets = [], hiddenBuiltinSizes = [], defaultSizeId, onAddSizePreset, onDeleteSizePreset, onSetDefaultSize, onRestoreBuiltins }) {
   const cur = state.bannerSize;
+  const hiddenSet = new Set(hiddenBuiltinSizes);
   const allSizes = [
-    ...BUILTIN_SIZES.map(s => ({ ...s, builtin: true })),
+    ...BUILTIN_SIZES.filter(s => !hiddenSet.has(s.id)).map(s => ({ ...s, builtin: true })),
     ...sizePresets.map(s => ({ ...s, builtin: false })),
   ];
   return (
@@ -2839,20 +2865,34 @@ function DesignProps({ state, setTweak, sizePresets = [], defaultSizeId, onAddSi
                   }}>
                   <Icon name="star" size={14} stroke={isDefault ? 2.4 : 1.7}/>
                 </button>
-                {!s.builtin && (
-                  <button title="删除预设"
-                    onClick={() => onDeleteSizePreset(s.id)}
-                    style={{
-                      display: 'flex', border: 'none', background: 'transparent', padding: 3,
-                      color: active ? 'rgba(255,255,255,.6)' : 'var(--ink-3)',
-                    }}>
-                    <Icon name="x" size={13}/>
-                  </button>
-                )}
+                <button title="删除预设"
+                  onClick={() => onDeleteSizePreset(s.id)}
+                  style={{
+                    display: 'flex', border: 'none', background: 'transparent', padding: 3,
+                    color: active ? 'rgba(255,255,255,.6)' : 'var(--ink-3)',
+                  }}>
+                  <Icon name="x" size={13}/>
+                </button>
               </div>
             );
           })}
+          {allSizes.length === 0 && (
+            <div style={{ fontSize: 10.5, color: 'var(--ink-3)', padding: '6px 2px' }}>
+              暂无尺寸预设 — 用上面的宽 / 高调好后存一个吧。
+            </div>
+          )}
         </div>
+        {hiddenBuiltinSizes.length > 0 && (
+          <button
+            onClick={onRestoreBuiltins}
+            style={{
+              marginTop: 6, border: 'none', background: 'transparent', padding: 0,
+              fontSize: 10.5, color: 'var(--ocean)', textDecoration: 'underline',
+              alignSelf: 'flex-start',
+            }}>
+            恢复内置尺寸（{hiddenBuiltinSizes.length}）
+          </button>
+        )}
         <div style={{ marginTop: 7, fontSize: 10, color: 'var(--ink-3)', lineHeight: 1.55 }}>
           新建画布会自动用 ★ 默认尺寸。预设已存在本浏览器，刷新不丢。
         </div>
