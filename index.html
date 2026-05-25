@@ -1118,6 +1118,7 @@ const Icon = ({ name, size = 18, stroke = 1.6 }) => {
     chat: <><path d="M21 12a8 8 0 0 1-8 8H7l-4 3v-3a8 8 0 1 1 18-8z"/></>,
     drag: <><circle cx="9" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="18" r="1"/></>,
     x: <><path d="M6 6l12 12M18 6L6 18"/></>,
+    star: <><path d="M12 3l2.9 5.9 6.5.9-4.7 4.6 1.1 6.5L12 18.3 6.2 21.4l1.1-6.5L2.6 9.8l6.5-.9L12 3z"/></>,
   };
   return <svg viewBox="0 0 24 24" style={s}>{paths[name] || null}</svg>;
 };
@@ -1271,6 +1272,20 @@ const mkCover = (overrides = {}) => ({
   id: overrides.id || ('c-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5)),
 });
 
+// Built-in size presets — fixed ids so they can be marked as the default size
+const BUILTIN_SIZES = [
+  { id: 'bi-banner', name: 'Banner 3.4:1', w: 1200, h: 350 },
+  { id: 'bi-169',    name: '16:9',         w: 1920, h: 1080 },
+  { id: 'bi-11',     name: '1:1',          w: 1080, h: 1080 },
+  { id: 'bi-916',    name: '9:16',         w: 900,  h: 1600 },
+];
+// Resolve the {w,h} of the chosen default size from a state object
+const resolveDefaultSize = (st) => {
+  const all = [...BUILTIN_SIZES, ...((st && st.sizePresets) || [])];
+  const found = all.find(p => p.id === (st && st.defaultSizeId));
+  return found ? { w: found.w, h: found.h } : { w: 1200, h: 350 };
+};
+
 const DEFAULT_STATE = {
   covers: [mkCover()],
   activeCoverIdx: 0,
@@ -1278,6 +1293,8 @@ const DEFAULT_STATE = {
   library: [],
   titlePresets: DEFAULT_TITLE_PRESETS.map(p => ({ ...p })),
   templates: DEFAULT_TEMPLATES.map(t => ({ ...t })),
+  sizePresets: [],
+  defaultSizeId: 'bi-banner',
 };
 
 // Migrate old flat state (v5 single-cover layout) into the new covers[] layout
@@ -1299,6 +1316,8 @@ const loadInitial = () => {
       library: saved.library || [],
       titlePresets: saved.titlePresets || DEFAULT_TITLE_PRESETS.map(p => ({ ...p })),
       templates: saved.templates || DEFAULT_TEMPLATES.map(t => ({ ...t })),
+      sizePresets: saved.sizePresets || [],
+      defaultSizeId: saved.defaultSizeId || 'bi-banner',
       activeCoverIdx: Math.min(saved.activeCoverIdx || 0, migratedCovers.length - 1),
       covers: migratedCovers,
     };
@@ -1315,6 +1334,8 @@ const loadInitial = () => {
     library: saved.library || [],
     titlePresets: saved.titlePresets || DEFAULT_TITLE_PRESETS.map(p => ({ ...p })),
     templates: DEFAULT_TEMPLATES.map(t => ({ ...t })),
+    sizePresets: saved.sizePresets || [],
+    defaultSizeId: saved.defaultSizeId || 'bi-banner',
   };
 };
 
@@ -1800,6 +1821,34 @@ function App() {
     flash('已删除模板');
   }, [rawState, setRawState]);
 
+  // ───── size-preset CRUD (shared across covers, persisted) ─────
+  const addSizePreset = () => {
+    const { w, h } = state.bannerSize;
+    const dup = (rawState.sizePresets || []).find(p => p.w === w && p.h === h);
+    if (dup) { flash(`已有相同尺寸预设「${dup.name}」`); return; }
+    const defName = `${w}×${h}`;
+    const name = prompt('给这个尺寸预设起个名字：', defName);
+    if (name === null) return;
+    const id = 'size-' + Date.now().toString(36);
+    setRawState(prev => ({
+      ...prev,
+      sizePresets: [...(prev.sizePresets || []), { id, name: (name.trim() || defName), w, h }],
+    }));
+    flash('已存为尺寸预设');
+  };
+  const deleteSizePreset = (id) => {
+    if (!confirm('删除这个尺寸预设？')) return;
+    setRawState(prev => ({
+      ...prev,
+      sizePresets: (prev.sizePresets || []).filter(p => p.id !== id),
+      defaultSizeId: prev.defaultSizeId === id ? 'bi-banner' : prev.defaultSizeId,
+    }));
+  };
+  const setDefaultSize = (id) => {
+    setRawState(prev => ({ ...prev, defaultSizeId: id }));
+    flash('已设为默认尺寸');
+  };
+
   // ───── reset ─────
   const reset = () => {
     if (!confirm('重置为初始状态？已上传的图片和所有画布会被清空。')) return;
@@ -1808,6 +1857,9 @@ function App() {
       activeCoverIdx: 0,
       library: [],
       titlePresets: DEFAULT_TITLE_PRESETS.map(p => ({ ...p })),
+      templates: DEFAULT_TEMPLATES.map(t => ({ ...t })),
+      sizePresets: [],
+      defaultSizeId: 'bi-banner',
     }));
     localStorage.removeItem(STORAGE_KEY);
     flash('已重置');
@@ -1829,7 +1881,7 @@ function App() {
       );
       let n = 1;
       while (used.has(n)) n++;
-      const newCover = mkCover({ filename: `封面${n}` });
+      const newCover = mkCover({ filename: `封面${n}`, bannerSize: resolveDefaultSize(prev) });
       return {
         ...prev,
         covers: [...prev.covers, newCover],
@@ -2349,7 +2401,17 @@ function App() {
               presetActions={{ applyPreset, savePreset, addPreset, deletePreset, reorderPresets, exportPresets, importPresets }}
             />
           )}
-          {propsTab === 'canvas' && <DesignProps state={state} setTweak={setTweak}/>}
+          {propsTab === 'canvas' && (
+            <DesignProps
+              state={state}
+              setTweak={setTweak}
+              sizePresets={rawState.sizePresets || []}
+              defaultSizeId={rawState.defaultSizeId}
+              onAddSizePreset={addSizePreset}
+              onDeleteSizePreset={deleteSizePreset}
+              onSetDefaultSize={setDefaultSize}
+            />
+          )}
         </aside>
       </div>
 
@@ -2708,7 +2770,12 @@ function NumberField({ value, onChange, min, max, fallback, ...rest }) {
 }
 
 // ───── DesignProps (right rail · design tab) ─────
-function DesignProps({ state, setTweak }) {
+function DesignProps({ state, setTweak, sizePresets = [], defaultSizeId, onAddSizePreset, onDeleteSizePreset, onSetDefaultSize }) {
+  const cur = state.bannerSize;
+  const allSizes = [
+    ...BUILTIN_SIZES.map(s => ({ ...s, builtin: true })),
+    ...sizePresets.map(s => ({ ...s, builtin: false })),
+  ];
   return (
     <div className="cs-panel-body col" style={{ gap: 0, padding: '8px 14px 16px' }}>
       <div className="group">
@@ -2717,37 +2784,77 @@ function DesignProps({ state, setTweak }) {
           <div className="col" style={{ flex: 1, gap: 2 }}>
             <label style={{ fontSize: 10.5, color: 'var(--ink-3)' }}>宽</label>
             <NumberField className="field"
-              value={state.bannerSize.w}
+              value={cur.w}
               min={200} max={4000} fallback={1200}
-              onChange={(v) => setTweak('bannerSize', { ...state.bannerSize, w: v })}
+              onChange={(v) => setTweak('bannerSize', { ...cur, w: v })}
               style={{ fontFamily: 'var(--f-mono)', fontSize: 12 }}/>
           </div>
           <div className="col" style={{ flex: 1, gap: 2 }}>
             <label style={{ fontSize: 10.5, color: 'var(--ink-3)' }}>高</label>
             <NumberField className="field"
-              value={state.bannerSize.h}
+              value={cur.h}
               min={100} max={4000} fallback={350}
-              onChange={(v) => setTweak('bannerSize', { ...state.bannerSize, h: v })}
+              onChange={(v) => setTweak('bannerSize', { ...cur, h: v })}
               style={{ fontFamily: 'var(--f-mono)', fontSize: 12 }}/>
           </div>
         </div>
-        <div className="row" style={{ gap: 4, flexWrap: 'wrap' }}>
-          {[
-            { name: 'Banner 3.4:1', w: 1200, h: 350 },
-            { name: '16:9', w: 1920, h: 1080 },
-            { name: '1:1', w: 1080, h: 1080 },
-            { name: '9:16', w: 900, h: 1600 },
-          ].map(r => (
-            <span key={r.name}
-              onClick={() => setTweak('bannerSize', { w: r.w, h: r.h })}
-              className="size-chip"
-              style={{
-                cursor: 'pointer',
-                ...(state.bannerSize.w === r.w && state.bannerSize.h === r.h
-                  ? { background: 'var(--ink)', color: '#fff', borderColor: 'var(--ink)' }
-                  : { fontSize: 10.5 })
-              }}>{r.name}</span>
-          ))}
+
+        <button
+          onClick={onAddSizePreset}
+          style={{
+            marginTop: 8, display: 'flex', alignItems: 'center', justifyContent: 'center',
+            gap: 4, width: '100%', padding: '6px 8px', fontSize: 11,
+            border: '1px dashed var(--line-2)', borderRadius: 'var(--r-sm)',
+            background: 'transparent', color: 'var(--ink-2)',
+          }}>
+          <Icon name="plus" size={12}/> 把当前尺寸存为预设
+        </button>
+
+        <div style={{ marginTop: 11, fontSize: 10.5, color: 'var(--ink-3)' }}>
+          尺寸预设 <span style={{ fontSize: 10 }}>· 点行套用 · ★ 设默认</span>
+        </div>
+        <div className="col" style={{ gap: 3, marginTop: 5 }}>
+          {allSizes.map(s => {
+            const active = cur.w === s.w && cur.h === s.h;
+            const isDefault = defaultSizeId === s.id;
+            return (
+              <div key={s.id}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 4,
+                  padding: '5px 5px 5px 9px', borderRadius: 'var(--r-sm)',
+                  border: '1px solid ' + (active ? 'var(--ink)' : 'var(--line)'),
+                  background: active ? 'var(--ink)' : 'var(--paper)',
+                  color: active ? '#fff' : 'var(--ink)',
+                }}>
+                <span onClick={() => setTweak('bannerSize', { w: s.w, h: s.h })}
+                  style={{ flex: 1, display: 'flex', alignItems: 'baseline', gap: 6, cursor: 'pointer', minWidth: 0 }}>
+                  <span style={{ fontSize: 11.5, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.name}</span>
+                  <span style={{ fontFamily: 'var(--f-mono)', fontSize: 10, opacity: .6, flexShrink: 0 }}>{s.w}×{s.h}</span>
+                </span>
+                <button title={isDefault ? '当前默认尺寸' : '设为默认尺寸'}
+                  onClick={() => onSetDefaultSize(s.id)}
+                  style={{
+                    display: 'flex', border: 'none', background: 'transparent', padding: 3,
+                    color: isDefault ? '#f0a92b' : (active ? 'rgba(255,255,255,.45)' : 'var(--line-2)'),
+                  }}>
+                  <Icon name="star" size={14} stroke={isDefault ? 2.4 : 1.7}/>
+                </button>
+                {!s.builtin && (
+                  <button title="删除预设"
+                    onClick={() => onDeleteSizePreset(s.id)}
+                    style={{
+                      display: 'flex', border: 'none', background: 'transparent', padding: 3,
+                      color: active ? 'rgba(255,255,255,.6)' : 'var(--ink-3)',
+                    }}>
+                    <Icon name="x" size={13}/>
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+        <div style={{ marginTop: 7, fontSize: 10, color: 'var(--ink-3)', lineHeight: 1.55 }}>
+          新建画布会自动用 ★ 默认尺寸。预设已存在本浏览器，刷新不丢。
         </div>
       </div>
 
